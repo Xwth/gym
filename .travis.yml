@@ -11,6 +11,8 @@ addons:
       - cmake-data
 
       - python-dev
+      - libstdc++6
+      - python-opengl
 python:
   - "2.7"
   - "3.5"
