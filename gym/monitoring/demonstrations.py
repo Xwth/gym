@@ -36,11 +36,14 @@ class DemonstrationReader(object):
         return self
 
     def next(self):
-        action_string = self.file.readline()
-        if action_string == "":
+        meta_string = self.file.readline()
+        if meta_string == "":
             raise StopIteration()
 
-        action = int(action_string)
+        meta = json.loads(meta_string)
+        action = meta['action']
+        reward = meta['reward']
+        done = meta['done']
 
         observation_string = self.file.readline()
         observation_string = base64.b64decode(observation_string)
