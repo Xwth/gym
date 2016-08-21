@@ -21,6 +21,7 @@ class AtariDemonstration(object):
         self.outfile = outfile
 
         self.rollout_time = 10*60*30 # 10 minutes at 30 fps
+        self.reset_action = False
         self.human_agent_action = 0
         self.human_wants_restart = False
         self.human_sets_pause = False
@@ -37,23 +38,35 @@ class AtariDemonstration(object):
             self.human_wants_restart = True
         if key==pyglet.window.key.SPACE:
             self.human_sets_pause = not self.human_sets_pause
-        if key==pyglet.window.key.SEMICOLON:
-            self.human_speed_boost = 20
-        if key==pyglet.window.key.L:
+        if key==pyglet.window.key.D:
+            self.human_speed_boost = 60
+        if key==pyglet.window.key.S:
             self.human_speed_boost = 10
+        if key==pyglet.window.key.F:
+            if self.human_speed_boost < 0:
+                self.human_speed_boost = 0
+            else:
+                self.human_speed_boost = -1
 
         if key == pyglet.window.key.UP: # up arrow
             self.human_agent_action = 2
+            self.reset_action = False
         if key == pyglet.window.key.DOWN: # down arrow
             self.human_agent_action = 3
+            self.reset_action = False
 
     def key_release(self, key, mod):
         logger.info("Released: %s", key)
-        self.human_agent_action = 0
+        if key == pyglet.window.key.UP and self.human_agent_action == 2:
+            self.reset_action = True
+        elif key == pyglet.window.key.DOWN and self.human_agent_action == 3:
+            self.reset_action = True
 
     def rollout(self):
         self.human_wants_restart = False
         ob = self.env.reset()
+        reward = None
+        done = False
 
         recorder = DemonstrationRecorder(self.outfile)
 
@@ -62,16 +75,21 @@ class AtariDemonstration(object):
             a = self.human_agent_action
             logger.info("Action: %s", a)
 
-            # Record o[t] -> a[t] (that is, action is the *label* for the
+            # Record (o[t], r[t) -> a[t] (that is, action is the *label* for the
             # observation)
-            recorder.record_step(a, ob)
+            recorder.record_step(a, reward, done, ob)
             ob, reward, done, info = self.env.step(a)
+            if self.reset_action:
+                self.human_agent_action = 0
 
             self.env.render()
 
             if self.human_speed_boost > 0:
                 # Boost because the user asked for it
                 self.human_speed_boost -= 1
+            elif self.human_speed_boost < 0:
+                # Slow because the user asked for it
+                time.sleep(0.33)
             else:
                 # Slow down the game to make it easier for me to play
                 time.sleep(0.16)
@@ -88,9 +106,9 @@ class AtariDemonstration(object):
         logger.info("""INSTRUCTIONS:
 
 - Press up/down to control the paddle
-- Press the semicolon key (s on Dvorak) to speed up for the next 20 frames
-- Press the l key (n on Dvorak) to speed up for the next 10 frames
-- Press the o key (r on Dvorak) to reset the episode. The current episode will still have been recorded.
+- Press the d key (e on Dvorak) to speed up for the next 20 frames
+- Press the s key (o on Dvorak) to speed up for the next 10 frames
+- Press the r key (o on Dvorak) to reset the episode. The current episode will still have been recorded.
 - Press the space key to pause the game, and space again to unpause.
 """)
 

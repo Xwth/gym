@@ -1,4 +1,5 @@
 import base64
+import json
 from io import BytesIO
 
 import numpy as np
@@ -9,10 +10,9 @@ class DemonstrationRecorder(object):
     def __init__(self, file_name):
         self.file = open(file_name, 'w')
 
-    def record_step(self, action, observation):
-
+    def record_step(self, action, reward, done, observation):
         # Write Action (1 line)
-        self.file.write(str(action))
+        self.file.write(json.dumps({'action': action, 'reward': reward, 'done': done}))
         self.file.write("\n")
 
         # Write Observation (1 line)
