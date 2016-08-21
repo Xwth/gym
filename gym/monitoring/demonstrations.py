@@ -1,67 +1,77 @@
 import base64
+import gzip
 import json
-from io import BytesIO
-
 import numpy as np
 import pickle
 
+import gym
+from gym.utils import closer
+
+recorder_closer = closer.Closer()
 
 class DemonstrationRecorder(object):
-    def __init__(self, file_name):
-        self.file = open(file_name, 'w')
+    def __init__(self, env, file_name):
+        self._id = recorder_closer.register(self)
+        self.env = env
+        self.i = 0
 
-    def record_step(self, action, reward, done, observation):
-        # Write Action (1 line)
-        self.file.write(json.dumps({'action': action, 'reward': reward, 'done': done}))
+        self.file = gzip.GzipFile(file_name, 'w')
+        self.file.write(json.dumps({'metadata': True, 'env_id': env.spec.id}))
         self.file.write("\n")
 
-        # Write Observation (1 line)
-        obs_string = base64.b64encode(observation.tostring())
-        self.file.write(obs_string)
+    def record_step(self, observation, reward, done, info, action):
+        observation = self.env.observation_space.to_jsonable(observation)
+        self.file.write(json.dumps({'i': 0, 'action': action, 'reward': reward, 'done': done, 'observation': observation, 'info': info}))
         self.file.write("\n")
+        self.i += 1
 
     def close(self):
         self.file.close()
+        recorder_closer.unregister(self._id)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __del__(self):
         self.close()
 
 class DemonstrationReader(object):
-    def __init__(self, file_name, obs_dtype="uint8", obs_shape=(210, 160, 3)):
-        self.file = open(file_name, 'rb')
-        self.obs_dtype = obs_dtype
-        self.obs_shape = obs_shape
+    def __init__(self, file_name):
+        self.file = gzip.GzipFile(file_name, 'rb')
+        meta = self.file.readline()
+        meta = json.loads(meta)
+        self.env = gym.spec(meta['env_id']).make()
 
     def __iter__(self):
         return self
 
     def next(self):
-        meta_string = self.file.readline()
-        if meta_string == "":
+        line = self.file.readline()
+        if line == "":
             raise StopIteration()
 
-        meta = json.loads(meta_string)
-        action = meta['action']
-        reward = meta['reward']
-        done = meta['done']
+        line = json.loads(line)
+        observation = line['observation']
+        reward = line['reward']
+        done = line['done']
+        info = line.get('info') # legacy
+        action = line['action']
 
-        observation_string = self.file.readline()
-        observation_string = base64.b64decode(observation_string)
-
-        observation = np.fromstring(observation_string, dtype=self.obs_dtype).reshape(self.obs_shape)
-        return action, observation
+        observation = self.env.observation_space.from_jsonable(observation)
+        return observation, reward, done, info, action
 
 
 if __name__ == '__main__':
     import gym
     from gym.monitoring.demonstrations import DemonstrationReader
 
-    recorder = DemonstrationRecorder("/tmp/pong.demo")
-    obs = np.arange(10)
-    recorder.record_step(1, obs)
+    env = gym.make('Pong-v0')
+    recorder = DemonstrationRecorder(env, "/tmp/pong.demo.gz")
+    ob = env.reset()
+    reward = done = info = None
+    action = 1
+    for _ in range(10):
+        recorder.record_step(ob, reward, done, info, action)
+        ob, reward, done, info = env.step(action)
     recorder.close()
 
-    reader = DemonstrationReader("/tmp/pong.demo", obs_dtype='int64', obs_shape=(10,))
-    for action, observation in reader:
+    reader = DemonstrationReader("/tmp/pong.demo.gz")
+    for observation, reward, done, info, action in reader:
         print(action)
-        print(observation)

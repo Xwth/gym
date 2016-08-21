@@ -30,10 +30,11 @@ class AtariDemonstration(object):
         self.env.render()
         self.env.viewer.window.on_key_press = self.key_press
         self.env.viewer.window.on_key_release = self.key_release
+        self.env.viewer.window.set_vsync(False)
+
+        self.i = 0
 
     def key_press(self, key, mod):
-        logger.info("Pressed: %s", key)
-
         if key==pyglet.window.key.O:
             self.human_wants_restart = True
         if key==pyglet.window.key.SPACE:
@@ -41,7 +42,8 @@ class AtariDemonstration(object):
         if key==pyglet.window.key.D:
             self.human_speed_boost = 60
         if key==pyglet.window.key.S:
-            self.human_speed_boost = 10
+            # Go fast only while this is held down
+            self.human_speed_boost = 10000
         if key==pyglet.window.key.F:
             if self.human_speed_boost < 0:
                 self.human_speed_boost = 0
@@ -56,29 +58,29 @@ class AtariDemonstration(object):
             self.reset_action = False
 
     def key_release(self, key, mod):
-        logger.info("Released: %s", key)
         if key == pyglet.window.key.UP and self.human_agent_action == 2:
             self.reset_action = True
         elif key == pyglet.window.key.DOWN and self.human_agent_action == 3:
             self.reset_action = True
+        elif key==pyglet.window.key.S:
+            self.human_speed_boost = 10
 
     def rollout(self):
         self.human_wants_restart = False
         ob = self.env.reset()
         reward = None
-        done = False
-
-        recorder = DemonstrationRecorder(self.outfile)
+        done = None
+        info = None
 
         for t in range(self.rollout_time):
-
-            a = self.human_agent_action
-            logger.info("Action: %s", a)
+            action = self.human_agent_action
+            logger.info("[%d, %d] Action: %s", self.i, t, action)
+            self.i += 1
 
             # Record (o[t], r[t) -> a[t] (that is, action is the *label* for the
             # observation)
-            recorder.record_step(a, reward, done, ob)
-            ob, reward, done, info = self.env.step(a)
+            self.recorder.record_step(ob, reward, done, info, action)
+            ob, reward, done, info = self.env.step(action)
             if self.reset_action:
                 self.human_agent_action = 0
 
@@ -100,8 +102,6 @@ class AtariDemonstration(object):
                 self.env.render()
                 time.sleep(0.1)
 
-        recorder.close()
-
     def run(self):
         logger.info("""INSTRUCTIONS:
 
@@ -112,15 +112,16 @@ class AtariDemonstration(object):
 - Press the space key to pause the game, and space again to unpause.
 """)
 
+        self.recorder = DemonstrationRecorder(self.env, self.outfile)
         while True:
             self.rollout()
-
+        self.recorder.close()
 
 def main():
     parser = argparse.ArgumentParser(description=None)
     parser.add_argument('-v', '--verbose', action='count', dest='verbosity', default=0, help='Set verbosity.')
     parser.add_argument('-e', '--env-id', default='Pong-v0', help='Which environment to run.')
-    parser.add_argument('-o', '--outfile', default='/tmp/atari.demo', help='Where to write demo file.')
+    parser.add_argument('-o', '--outfile', default='/tmp/atari.demo.gz', help='Where to write demo file.')
     args = parser.parse_args()
 
     if args.verbosity == 0:
