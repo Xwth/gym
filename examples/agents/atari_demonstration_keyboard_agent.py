@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-from __future__ import print_function
-
-import sys
+import argparse
+import logging
+import pyglet
 import time
+import sys
 
 import gym
 
@@ -12,71 +13,107 @@ import gym
 from gym.monitoring import demonstrations
 from gym.monitoring.demonstrations import DemonstrationRecorder
 
-env = gym.make('Pong-v0' if len(sys.argv)<2 else sys.argv[1])
+logger = logging.getLogger()
 
-ACTIONS = env.action_space.n
-ROLLOUT_TIME = 10*60*30 # 10 minutes at 30 fps
-human_agent_action = 0
-human_wants_restart = False
-human_sets_pause = False
+class AtariDemonstration(object):
+    def __init__(self, env_id, outfile):
+        self.env = gym.make(env_id)
+        self.outfile = outfile
 
-def key_press(key, mod):
-    global human_agent_action, human_wants_restart, human_sets_pause
-    print("Pressed: {}".format(key))
+        self.rollout_time = 10*60*30 # 10 minutes at 30 fps
+        self.human_agent_action = 0
+        self.human_wants_restart = False
+        self.human_sets_pause = False
+        self.human_speed_boost = 0
 
-    if key==0xff0d: human_wants_restart = True
-    if key==32: human_sets_pause = not human_sets_pause
+        self.env.render()
+        self.env.viewer.window.on_key_press = self.key_press
+        self.env.viewer.window.on_key_release = self.key_release
 
-    if key == 65362: # up arrow
-        key = 50
-    if key == 65364: # down arrow
-        key = 51
+    def key_press(self, key, mod):
+        logger.info("Pressed: %s", key)
 
-    a = key - ord('0')
-    if a <= 0 or a >= ACTIONS: return
-    human_agent_action = a
+        if key==pyglet.window.key.O:
+            self.human_wants_restart = True
+        if key==pyglet.window.key.SPACE:
+            self.human_sets_pause = not self.human_sets_pause
+        if key==pyglet.window.key.SEMICOLON:
+            self.human_speed_boost = 20
+        if key==pyglet.window.key.L:
+            self.human_speed_boost = 10
 
-def key_release(key, mod):
-    print("Released: {}".format(key))
-    global human_agent_action
-    human_agent_action = 0
+        if key == pyglet.window.key.UP: # up arrow
+            self.human_agent_action = 2
+        if key == pyglet.window.key.DOWN: # down arrow
+            self.human_agent_action = 3
 
-env.render()
-env.viewer.window.on_key_press = key_press
-env.viewer.window.on_key_release = key_release
+    def key_release(self, key, mod):
+        logger.info("Released: %s", key)
+        self.human_agent_action = 0
 
-def rollout(env):
-    global human_agent_action, human_wants_restart, human_sets_pause
-    human_wants_restart = False
-    obser = env.reset()
+    def rollout(self):
+        self.human_wants_restart = False
+        ob = self.env.reset()
 
-    recorder = DemonstrationRecorder('/tmp/atari.demo')
+        recorder = DemonstrationRecorder(self.outfile)
 
-    for t in range(ROLLOUT_TIME):
+        for t in range(self.rollout_time):
 
-        a = human_agent_action
-        print("Action: {}".format(a))
+            a = self.human_agent_action
+            logger.info("Action: %s", a)
 
-        obser, r, done, info = env.step(a)
-        recorder.record_step(a, obser)
+            # Record o[t] -> a[t] (that is, action is the *label* for the
+            # observation)
+            recorder.record_step(a, ob)
+            ob, reward, done, info = self.env.step(a)
 
-        env.render()
+            self.env.render()
+
+            if self.human_speed_boost > 0:
+                # Boost because the user asked for it
+                self.human_speed_boost -= 1
+            else:
+                # Slow down the game to make it easier for me to play
+                time.sleep(0.16)
+
+            if done: break
+            if self.human_wants_restart: break
+            while self.human_sets_pause:
+                self.env.render()
+                time.sleep(0.1)
+
+        recorder.close()
+
+    def run(self):
+        logger.info("""INSTRUCTIONS:
+
+- Press up/down to control the paddle
+- Press the semicolon key (s on Dvorak) to speed up for the next 20 frames
+- Press the l key (n on Dvorak) to speed up for the next 10 frames
+- Press the o key (r on Dvorak) to reset the episode. The current episode will still have been recorded.
+- Press the space key to pause the game, and space again to unpause.
+""")
+
+        while True:
+            self.rollout()
 
 
-        # Slow down the game to make it easier for me to play
-        time.sleep(0.16)
+def main():
+    parser = argparse.ArgumentParser(description=None)
+    parser.add_argument('-v', '--verbose', action='count', dest='verbosity', default=0, help='Set verbosity.')
+    parser.add_argument('-e', '--env-id', default='Pong-v0', help='Which environment to run.')
+    parser.add_argument('-o', '--outfile', default='/tmp/atari.demo', help='Where to write demo file.')
+    args = parser.parse_args()
 
-        if done: break
-        if human_wants_restart: break
-        while human_sets_pause:
-            env.render()
-            time.sleep(0.1)
+    if args.verbosity == 0:
+        logger.setLevel(logging.INFO)
+    elif args.verbosity >= 1:
+        logger.setLevel(logging.DEBUG)
 
-    recorder.close()
+    atari = AtariDemonstration(args.env_id, args.outfile)
+    atari.run()
 
-print("ACTIONS={}".format(ACTIONS))
-print("Press keys 1 2 3 ... to take actions 1 2 3 ...")
-print("No keys pressed is taking action 0")
+    return 0
 
-while 1:
-    rollout(env)
+if __name__ == '__main__':
+    sys.exit(main())
